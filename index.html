@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X Firebase Clone</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+body{background:#000;color:#e7e9ea}
+.card{background:#16181c;border-radius:16px}
+textarea{background:transparent;border:none;color:white;resize:none; width: 100%;}
+textarea:focus{box-shadow:none}
+img{border-radius:12px; max-width: 100%; height: auto;}
+.post{border-bottom:1px solid #2f3336;padding:12px}
+.like{cursor:pointer;color:#71767b}
+.like.liked{color:#f4212e}
+</style>
+</head>
+
+<body>
+<div class="container py-3" style="max-width:520px">
+
+<h4 class="text-center mb-3">𝕏 Firebase Clone</h4>
+
+<!-- AUTH -->
+<div id="auth">
+<button class="btn btn-light w-100 mb-2" id="googleLogin">Sign in with Google</button>
+
+<input id="email" class="form-control mb-2" placeholder="Email">
+<input id="password" type="password" class="form-control mb-2" placeholder="Password">
+
+<button class="btn btn-primary w-100 mb-2" id="emailLogin">Login / Register</button>
+</div>
+
+<!-- APP -->
+<div id="app" style="display:none">
+
+<button id="logout" class="btn btn-sm btn-outline-light mb-2">Logout</button>
+
+<div class="card p-3 mb-3">
+<textarea id="text" rows="3" maxlength="280" placeholder="What’s happening?"></textarea>
+<input type="file" id="imageInput" multiple class="form-control mt-2" accept="image/*">
+<button id="postBtn" class="btn btn-primary mt-2 w-100">Post</button>
+</div>
+
+<div id="timeline"></div>
+</div>
+
+</div>
+
+<!-- Bootstrap JS Bundle (placed at the end of body for performance) -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- Firebase SDKs and your script -->
+<script type="module">
+  // Import the functions you need from the SDKs you need
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-analytics.js";
+
+  // Add imports for Authentication
+  import {
+    getAuth,
+    GoogleAuthProvider,
+    signInWithPopup,
+    signInWithEmailAndPassword,
+    createUserWithEmailAndPassword,
+    signOut,
+    onAuthStateChanged
+  } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-auth.js";
+
+  // Add imports for Firestore
+  import {
+    getFirestore,
+    collection,
+    addDoc,
+    doc,
+    updateDoc,
+    query,
+    orderBy,
+    serverTimestamp,
+    onSnapshot // <-- This is the key for real-time updates!
+  } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-firestore.js";
+
+  // Add imports for Storage
+  import {
+    getStorage,
+    ref,
+    uploadBytes,
+    getDownloadURL
+  } from "https://www.gstatic.com/firebasejs/12.8.0/firebase-storage.js";
+
+  // Your web app's Firebase configuration
+  const firebaseConfig = {
+    apiKey: "AIzaSyBLauy8UvIkbocYjbOo81Ax2p1TnMZ48lY",
+    authDomain: "twitter-chatting-app.firebaseapp.com",
+    projectId: "twitter-chatting-app",
+    storageBucket: "twitter-chatting-app.firebasestorage.app",
+    messagingSenderId: "1094069524057",
+    appId: "1:1094069524057:web:e674a569a8bb801795c348",
+    measurementId: "G-ENDL0PTLPN"
+  };
+
+  // Initialize Firebase
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
+
+  // Initialize Firebase Services
+  const auth = getAuth(app); // Initialize Auth
+  const db = getFirestore(app); // Initialize Firestore
+  const storage = getStorage(app); // Initialize Storage
+  const googleProvider = new GoogleAuthProvider(); // Define Google Auth Provider
+
+  // --- DOM Elements ---
+  const authBox = document.getElementById("auth");
+  const appBox = document.getElementById("app");
+  const googleLoginBtn = document.getElementById("googleLogin");
+  const emailInput = document.getElementById("email");
+  const passwordInput = document.getElementById("password");
+  const emailLoginBtn = document.getElementById("emailLogin");
+  const logoutBtn = document.getElementById("logout");
+  const postTextInput = document.getElementById("text");
+  const imageInput = document.getElementById("imageInput");
+  const postButton = document.getElementById("postBtn");
+  const timelineDiv = document.getElementById("timeline");
+
+  let currentUser = null;
+  let unsubscribeFromPosts = null; // To store the unsubscribe function for the real-time listener
+
+  // --- AUTHENTICATION ---
+  googleLoginBtn.onclick = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Google Sign-in Error:", error);
+      alert(`Failed to sign in with Google: ${error.message}`);
+    }
+  };
+
+  emailLoginBtn.onclick = async () => {
+    try {
+      await signInWithEmailAndPassword(auth, emailInput.value, passwordInput.value);
+    } catch (loginError) {
+      if (loginError.code === 'auth/user-not-found' || loginError.code === 'auth/wrong-password') {
+        try {
+          await createUserWithEmailAndPassword(auth, emailInput.value, passwordInput.value);
+          alert("Account created and logged in!");
+        } catch (signupError) {
+          console.error("Email Sign-up Error:", signupError);
+          alert(`Failed to sign up: ${signupError.message}`);
+        }
+      } else {
+        console.error("Email Login Error:", loginError);
+        alert(`Failed to log in: ${loginError.message}`);
+      }
+    }
+  };
+
+  logoutBtn.onclick = async () => {
+    try {
+      await signOut(auth);
+      alert("Logged out successfully!");
+    } catch (error) {
+      console.error("Logout Error:", error);
+      alert(`Failed to log out: ${error.message}`);
+    }
+  };
+
+  onAuthStateChanged(auth, (user) => {
+    if (user) {
+      currentUser = user;
+      authBox.style.display = "none";
+      appBox.style.display = "block";
+      // Start listening for real-time posts when user logs in
+      unsubscribeFromPosts = setupRealtimePostsListener();
+    } else {
+      currentUser = null;
+      authBox.style.display = "block";
+      appBox.style.display = "none";
+      timelineDiv.innerHTML = ""; // Clear timeline on logout
+      // Stop listening for real-time posts when user logs out
+      if (unsubscribeFromPosts) {
+        unsubscribeFromPosts();
+        unsubscribeFromPosts = null;
+      }
+    }
+  });
+
+  // --- POSTING ---
+  postButton.onclick = async () => {
+    if (!currentUser) {
+      alert("Please log in to post.");
+      return;
+    }
+
+    postButton.disabled = true;
+    postButton.textContent = "Posting...";
+
+    try {
+      const uploadedImageUrls = [];
+      if (imageInput.files.length > 0) {
+        for (const file of imageInput.files) {
+          const storageRef = ref(storage, `posts/${currentUser.uid}/${Date.now()}_${file.name}`);
+          const snapshot = await uploadBytes(storageRef, file);
+          const downloadURL = await getDownloadURL(snapshot.ref);
+          uploadedImageUrls.push(downloadURL);
+        }
+      }
+
+      await addDoc(collection(db, "posts"), {
+        uid: currentUser.uid,
+        name: currentUser.displayName || currentUser.email,
+        text: postTextInput.value,
+        images: uploadedImageUrls,
+        likes: 0,
+        timestamp: serverTimestamp() // Use server timestamp for accuracy
+      });
+
+      postTextInput.value = "";
+      imageInput.value = "";
+    } catch (error) {
+      console.error("Error creating post:", error);
+      alert(`Failed to create post: ${error.message}`);
+    } finally {
+      postButton.disabled = false;
+      postButton.textContent = "Post";
+    }
+  };
+
+  // --- REAL-TIME POSTS LISTENER ---
+  function setupRealtimePostsListener() {
+    timelineDiv.innerHTML = '<p class="text-center">Loading posts...</p>'; // User feedback
+
+    // Create a query to get posts, ordered by timestamp
+    const postsQuery = query(collection(db, "posts"), orderBy("timestamp", "desc"));
+
+    // Attach a real-time listener
+    const unsubscribe = onSnapshot(postsQuery, (querySnapshot) => {
+      timelineDiv.innerHTML = ""; // Clear existing posts before rendering new ones
+
+      if (querySnapshot.empty) {
+        timelineDiv.innerHTML = '<p class="text-center">No posts yet. Be the first to post!</p>';
+        return;
+      }
+
+      querySnapshot.forEach((documentSnapshot) => {
+        const postData = documentSnapshot.data();
+        const postId = documentSnapshot.id; // Get the document ID for updates
+
+        const postElement = document.createElement("div");
+        postElement.className = "post";
+
+        let displayName = postData.name;
+        if (currentUser && currentUser.uid === postData.uid) {
+            displayName += " (You)"; // Indicate current user's posts
+        }
+
+        const formattedTime = postData.timestamp ? new Date(postData.timestamp.toDate()).toLocaleString() : 'Just now';
+
+
+        postElement.innerHTML = `
+          <b>${displayName}</b> <span style="font-size: 0.8em; color: #71767b;">${formattedTime}</span>
+          <div>${postData.text}</div>
+        `;
+
+        postData.images.forEach(imageUrl => {
+          postElement.innerHTML += `<img src="${imageUrl}" class="mt-2 img-fluid">`;
+        });
+
+        const likeElement = document.createElement("div");
+        likeElement.className = "like mt-1";
+        likeElement.innerText = `❤️ ${postData.likes || 0}`;
+
+        likeElement.onclick = async () => {
+          if (!currentUser) {
+            alert("Please log in to like posts.");
+            return;
+          }
+          // Optimistic UI update for immediate feedback
+          const currentLikes = (postData.likes || 0) + 1;
+          likeElement.innerText = `❤️ ${currentLikes}`;
+          likeElement.classList.add("liked");
+
+          try {
+            await updateDoc(doc(db, "posts", postId), {
+              likes: currentLikes
+            });
+            // No need to update postData.likes here, onSnapshot will re-render
+          } catch (error) {
+            console.error("Error updating like:", error);
+            alert(`Failed to like post: ${error.message}`);
+            // Revert optimistic update if failed
+            likeElement.innerText = `❤️ ${currentLikes - 1}`;
+            likeElement.classList.remove("liked");
+          }
+        };
+        postElement.appendChild(likeElement);
+        timelineDiv.appendChild(postElement); // Append new posts to the bottom
+      });
+    }, (error) => {
+      console.error("Error getting real-time updates:", error);
+      timelineDiv.innerHTML = `<p class="text-center text-danger">Failed to load posts: ${error.message}</p>`;
+    });
+
+    return unsubscribe; // Return the unsubscribe function
+  }
+</script>
+
+</body>
+</html>
